@@ -198,7 +198,8 @@
       for (; attempt < 3; attempt++) {
         try {
           log('[JOIN] insertCoin attempt', attempt + 1);
-          room = await insertCoin();
+          //room = await insertCoin();
+          room = await insertCoin({ gameId: "pong-multiplayer", skipLobby: true });
           if (room) break;
         } catch (err) {
           lastErr = err;
