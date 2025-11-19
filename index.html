@@ -13,8 +13,13 @@
   <canvas id="c"></canvas>
 
   <!-- Playroom UMD (CDN) -->
+  <!-- React and ReactDOM first -->
+  <script src="https://unpkg.com/react/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom/umd/react-dom.production.min.js"></script>
+  
+  <!-- Then PlayroomKit -->
   <script src="https://unpkg.com/playroomkit/multiplayer.full.umd.js"></script>
-
+  
   <script>
   (async () => {
     const PR = window.Playroom;   // CDN build exposes Playroom
