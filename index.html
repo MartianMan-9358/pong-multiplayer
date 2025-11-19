@@ -19,12 +19,9 @@
   <canvas id="game" width="800" height="500"></canvas>
   <div id="diag">booting…</div>
 
-  <!-- PlayroomKit UMD requires React + ReactDOM -->
   <script src="https://unpkg.com/react/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom/umd/react-dom.production.min.js"></script>
-
-  <!-- PlayroomKit UMD (served from your repo) -->
-  <script src="./playroomkit.umd.js"></script>
+  <script src="https://unpkg.com/playroomkit/playroomkit.umd.js"></script>
 
   <script>
   (function () {
@@ -38,7 +35,7 @@
     const log = (...a) => console.log(...a);
     const diag = msg => { diagEl.textContent = msg; log('[DIAG]', msg); };
 
-    if (!window.Playroom) { diag('PlayroomKit missing — ensure playroomkit.umd.js is loaded.'); return; }
+    if (!window.Playroom) { diag('PlayroomKit missing — check CDN URL and hard-reload.'); return; }
     const { insertCoin, myPlayer, isHost, onPlayerJoin } = window.Playroom;
 
     const state = {
@@ -49,11 +46,8 @@
       hosting: false
     };
 
-    let room = null;
-    let joined = false;
-    let hostTick = null;
+    let room = null, joined = false, hostTick = null;
     const keys = {};
-
     window.addEventListener('keydown', e => keys[e.code] = true);
     window.addEventListener('keyup',   e => keys[e.code] = false);
 
@@ -75,10 +69,7 @@
       if (state.slot === 'p2') { if (keys['ArrowUp']) state.paddles.p2.y -= 6; if (keys['ArrowDown']) state.paddles.p2.y += 6; state.paddles.p2.y = clamp(state.paddles.p2.y); }
     }
 
-    function throttle(fn, ms) {
-      let last = 0;
-      return (...args) => { const now = Date.now(); if (now - last >= ms) { last = now; fn(...args); } };
-    }
+    function throttle(fn, ms) { let last = 0; return (...args) => { const now = Date.now(); if (now - last >= ms) { last = now; fn(...args); } }; }
 
     const publishMyPaddle = throttle(() => {
       if (!room) return;
@@ -111,10 +102,7 @@
       }, 1000 / 60);
     }
 
-    function stopHost() {
-      state.hosting = false;
-      if (hostTick) { clearInterval(hostTick); hostTick = null; diag('Host stopped'); }
-    }
+    function stopHost() { state.hosting = false; if (hostTick) { clearInterval(hostTick); hostTick = null; diag('Host stopped'); } }
 
     function hookSubscriptions() {
       room.onStateChange('paddle_0', val => { if (val) state.paddles.p1 = { ...state.paddles.p1, ...val }; });
@@ -134,10 +122,7 @@
       diag('Joining… (lobby should appear)');
 
       try {
-        // IMPORTANT: enable lobby by omitting skipLobby
-        room = await insertCoin({ gameId: 'pong-vanilla' },
-          () => log('[JOIN] Launch callback'),
-          () => log('[JOIN] Disconnected'));
+        room = await insertCoin({ gameId: 'pong-vanilla' });
       } catch (err) {
         console.error('[JOIN] insertCoin error', err);
         diag('Join failed — see console');
