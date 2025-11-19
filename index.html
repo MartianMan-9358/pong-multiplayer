@@ -22,53 +22,37 @@
 
   <script>
   (function () {
-    const {
-      insertCoin,
-      onPlayerJoin,
-      myPlayer,
-      isHost,
-      setState,
-      onStateChange
-    } = window.Playroom;
+    const { insertCoin, onPlayerJoin, myPlayer, isHost } = window.Playroom;
 
     const joinBtn = document.getElementById('join');
     const canvas = document.getElementById('c');
     const ctx = canvas.getContext('2d');
     canvas.width = 800; canvas.height = 500;
 
-    // Game state
     const state = {
       ball: { x: canvas.width/2, y: canvas.height/2, vx: 4, vy: 3 },
       paddles: { p1: { y: (canvas.height-100)/2 }, p2: { y: (canvas.height-100)/2 } },
       scores: { p1: 0, p2: 0 },
-      slot: 'p1',         // local player's paddle side
-      hosting: false      // whether this client is host
+      slot: 'p1',
+      hosting: false
     };
 
-    // Input
     const keys = {};
     window.addEventListener('keydown', e => { keys[e.code] = true; });
     window.addEventListener('keyup',   e => { keys[e.code] = false; });
 
-    // Drawing
     function draw() {
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
-
       ctx.fillStyle = '#fff';
       ctx.fillRect(20, state.paddles.p1.y, 12, 100);
       ctx.fillRect(canvas.width - 32, state.paddles.p2.y, 12, 100);
-
-      ctx.beginPath();
-      ctx.arc(state.ball.x, state.ball.y, 8, 0, Math.PI * 2);
-      ctx.fill();
-
+      ctx.beginPath(); ctx.arc(state.ball.x, state.ball.y, 8, 0, Math.PI * 2); ctx.fill();
       ctx.font = '20px monospace';
       ctx.fillText(state.scores.p1, canvas.width * 0.25, 30);
       ctx.fillText(state.scores.p2, canvas.width * 0.75, 30);
     }
 
-    // Local input applies to your slot
     function applyLocalInput() {
       if (state.slot === 'p1') {
         if (keys['KeyW']) state.paddles.p1.y -= 6;
@@ -81,7 +65,6 @@
       }
     }
 
-    // Throttle helper
     function throttle(fn, ms) {
       let last = 0;
       return (...a) => {
@@ -89,11 +72,12 @@
         if (now - last >= ms) { last = now; fn(...a); }
       };
     }
+
+    let room = null;
     const publishPaddles = throttle(() => {
-      setState('paddles', state.paddles);
+      if (room) room.setState('paddles', state.paddles);
     }, 50);
 
-    // Host loop (only runs on host)
     let hostTick = null;
     function startHost() {
       if (hostTick) return;
@@ -101,28 +85,14 @@
       hostTick = setInterval(() => {
         const b = state.ball;
         b.x += b.vx; b.y += b.vy;
-
-        // walls
         if (b.y < 8 || b.y > canvas.height - 8) b.vy *= -1;
-
-        // paddle collisions
         if (b.x - 8 < 32 && b.y > state.paddles.p1.y && b.y < state.paddles.p1.y + 100) b.vx = Math.abs(b.vx);
         if (b.x + 8 > canvas.width - 32 && b.y > state.paddles.p2.y && b.y < state.paddles.p2.y + 100) b.vx = -Math.abs(b.vx);
-
-        // scoring
-        if (b.x < 0) {
-          state.scores.p2++;
-          b.x = canvas.width / 2; b.y = canvas.height / 2; b.vx = 4; b.vy = 3;
-        }
-        if (b.x > canvas.width) {
-          state.scores.p1++;
-          b.x = canvas.width / 2; b.y = canvas.height / 2; b.vx = -4; b.vy = -3;
-        }
-
-        // publish host state
-        setState('ball', { x: b.x, y: b.y, vx: b.vx, vy: b.vy, ts: Date.now() });
-        setState('scores', state.scores);
-        setState('paddles', state.paddles);
+        if (b.x < 0) { state.scores.p2++; b.x = canvas.width/2; b.y = canvas.height/2; b.vx = 4;  b.vy = 3; }
+        if (b.x > canvas.width) { state.scores.p1++; b.x = canvas.width/2; b.y = canvas.height/2; b.vx = -4; b.vy = -3; }
+        room.setState('ball',   { x: b.x, y: b.y, vx: b.vx, vy: b.vy, ts: Date.now() });
+        room.setState('scores', state.scores);
+        room.setState('paddles',state.paddles);
       }, 1000 / 60);
     }
     function stopHost() {
@@ -131,44 +101,31 @@
       hostTick = null;
     }
 
-    // Subscribe to remote state
-    function hookState() {
-      onStateChange('ball',   val => { if (!state.hosting && val) state.ball    = { ...state.ball,    ...val }; });
-      onStateChange('paddles',val => { if (val)                state.paddles = { ...state.paddles, ...val }; });
-      onStateChange('scores', val => { if (val)                state.scores  = { ...val }; });
-    }
-
-    // Join flow using helpers
     async function join() {
       try {
-        // Opens popup, creates room, appends #r=ID to URL
-        await insertCoin();
+        room = await insertCoin();   // returns a room object
+        if (!room) {
+          console.error("Room not returned. Did you allow the popup and click Launch?");
+          return;
+        }
 
-        // Assign slot when players join
+        // Subscribe to state changes via the room
+        room.onStateChange("ball",    val => { if (!state.hosting && val) state.ball    = { ...state.ball,    ...val }; });
+        room.onStateChange("paddles", val => { if (val)                    state.paddles = { ...state.paddles, ...val }; });
+        room.onStateChange("scores",  val => { if (val)                    state.scores  = { ...val }; });
+
         onPlayerJoin(player => {
-          // player.index is 0 for first player, 1 for second, etc.
           const me = myPlayer();
           if (me && player.id === me.id) {
             state.slot = (player.index === 0) ? 'p1' : 'p2';
           }
-
-          // Host is automatically determined by PlayroomKit
-          if (isHost()) {
-            startHost();
-          } else {
-            stopHost();
-          }
-
-          // Start listening to state after join
-          hookState();
+          if (isHost()) { startHost(); } else { stopHost(); }
         });
-
       } catch (err) {
-        console.error('Playroom join failed:', err);
+        console.error("Playroom join failed:", err);
       }
     }
 
-    // Main loop
     function loop() {
       applyLocalInput();
       publishPaddles();
