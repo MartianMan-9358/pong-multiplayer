@@ -23,8 +23,8 @@
   <script src="https://unpkg.com/react/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom/umd/react-dom.production.min.js"></script>
 
-  <!-- PlayroomKit UMD (if cross-origin issues appear, replace this with a locally hosted UMD) -->
-  <script src="https://unpkg.com/playroomkit/multiplayer.full.umd.js"></script>
+  <!-- PlayroomKit UMD (local copy hosted in your repo) -->
+  <script src="./playroomkit.umd.js"></script>
 
   <script>
   (function () {
@@ -43,7 +43,7 @@
       ball: { x: W/2, y: H/2, vx: 4, vy: 3 },
       paddles: { p1: { y: (H - PADDLE_H)/2 }, p2: { y: (H - PADDLE_H)/2 } },
       scores: { p1: 0, p2: 0 },
-      slot: null,    // 'p1' or 'p2'
+      slot: null,
       hosting: false
     };
 
@@ -91,7 +91,6 @@
       };
     }
 
-    // publish only this player's paddle on a per-player key
     const publishMyPaddle = throttle(() => {
       if (!room) return;
       const me = myPlayer();
@@ -110,11 +109,9 @@
         b.x += b.vx; b.y += b.vy;
         if (b.y < 8 || b.y > H - 8) b.vy *= -1;
 
-        // paddle collisions
         if (b.x - 8 < 20 + PADDLE_W && b.y > state.paddles.p1.y && b.y < state.paddles.p1.y + PADDLE_H) b.vx = Math.abs(b.vx);
         if (b.x + 8 > W - 20 - PADDLE_W && b.y > state.paddles.p2.y && b.y < state.paddles.p2.y + PADDLE_H) b.vx = -Math.abs(b.vx);
 
-        // scoring
         if (b.x < 0) {
           state.scores.p2++;
           Object.assign(b, { x: W/2, y: H/2, vx: 4, vy: 3 });
@@ -124,7 +121,6 @@
           Object.assign(b, { x: W/2, y: H/2, vx: -4, vy: -3 });
         }
 
-        // publish authoritative state
         if (room) {
           room.setState('ball', { x: b.x, y: b.y, vx: b.vx, vy: b.vy, ts: Date.now() });
           room.setState('scores', state.scores);
@@ -137,34 +133,22 @@
       if (hostTick) { clearInterval(hostTick); hostTick = null; diag('host: stopped'); }
     }
 
-    // merge paddle updates from per-player keys
     function hookPaddles() {
-      room.onStateChange('paddle_0', val => {
-        if (!val) return;
-        state.paddles.p1 = { ...state.paddles.p1, ...val };
-      });
-      room.onStateChange('paddle_1', val => {
-        if (!val) return;
-        state.paddles.p2 = { ...state.paddles.p2, ...val };
-      });
+      room.onStateChange('paddle_0', val => { if (val) state.paddles.p1 = { ...state.paddles.p1, ...val }; });
+      room.onStateChange('paddle_1', val => { if (val) state.paddles.p2 = { ...state.paddles.p2, ...val }; });
     }
 
-    // subscribe authoritative ball/scores safely (host ignores incoming)
     function hookBallAndScores() {
-      room.onStateChange('ball', val => {
-        if (!val) return;
-        if (!state.hosting) state.ball = { ...state.ball, ...val };
-      });
+      room.onStateChange('ball', val => { if (val && !state.hosting) state.ball = { ...state.ball, ...val }; });
       room.onStateChange('scores', val => { if (val) state.scores = { ...val }; });
     }
 
-    // robust join: assign slot immediately, start host if appropriate, and hook subscriptions
     async function join() {
       if (joined) return;
       joined = true;
       diag('joining...');
       try {
-        room = await insertCoin(); // may show overlay; may resolve null in some flows
+        room = await insertCoin();
         if (!room) {
           diag('No room object — ensure you clicked Launch (or try again)', 'orange');
           console.error('insertCoin returned null. Ensure Launch completed or retry.');
@@ -172,23 +156,17 @@
           return;
         }
 
-        // subscribe core keys first
         hookBallAndScores();
         hookPaddles();
 
-        // assign slot immediately from myPlayer() if possible
         const me = myPlayer();
         if (me && typeof me.index === 'number') {
           state.slot = (me.index === 0) ? 'p1' : 'p2';
           console.info('assigned slot:', state.slot, 'index:', me.index);
-        } else {
-          console.info('myPlayer() not available yet; waiting for onPlayerJoin');
         }
 
-        // start host if this client is host now
         if (isHost()) startHost(); else stopHost();
 
-        // update on future player join events (late arrivals / reassignments)
         onPlayerJoin(player => {
           const me2 = myPlayer();
           if (me2 && player.id === me2.id && typeof player.index === 'number') {
@@ -198,7 +176,7 @@
           if (isHost()) startHost(); else stopHost();
         });
 
-        diag('joined — slot: ' + (state.slot || 'unknown') + (isHost() ? ' (host)' : ''));
+                diag('joined — slot: ' + (state.slot || 'unknown') + (isHost() ? ' (host)' : ''));
         console.log('Room URL:', location.href);
       } catch (err) {
         console.error('join failed:', err);
@@ -210,19 +188,18 @@
     // main loop
     function loop() {
       applyLocalInput();
-      // only publish your paddle
-      publishMyPaddle();
+      publishMyPaddle();   // only publish your paddle
       draw();
       requestAnimationFrame(loop);
     }
 
     joinBtn.onclick = join;
-    copyBtn.onclick = () => navigator.clipboard?.writeText(location.href).then(()=>diag('URL copied'));
+    copyBtn.onclick = () => navigator.clipboard?.writeText(location.href).then(() => diag('URL copied'));
 
     // start drawing loop
     loop();
 
-    // quick debug logs periodically (remove later)
+    // quick debug logs periodically
     setInterval(() => {
       console.debug('slot', state.slot, 'hosting', state.hosting, 'room', !!room);
     }, 4000);
