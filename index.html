@@ -7,7 +7,6 @@
   <style>
     body { background:#111; color:#fff; text-align:center; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial; }
     canvas { display:block; margin:18px auto; background:#000; border:1px solid #333; }
-    button { padding:8px 14px; font-size:15px; margin:8px; }
     #diag { position:fixed; right:12px; top:12px; background:#222; color:#fff; padding:8px 10px;
             font-family:monospace; font-size:13px; z-index:9999; border-radius:6px; max-width:420px; white-space:pre-wrap; }
   </style>
@@ -15,16 +14,15 @@
 <body>
   <h1>Pong</h1>
   <p>Player 1: W/S — Player 2: ↑/↓</p>
-  <div><button id="join">Create / Join game (shows lobby)</button></div>
   <canvas id="game" width="800" height="500"></canvas>
   <div id="diag">booting…</div>
+
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/playroomkit/multiplayer.full.umd.js"></script>
   <script>
-  (function () {
+  (async function () {
     const diagEl = document.getElementById('diag');
-    const joinBtn = document.getElementById('join');
     const canvas = document.getElementById('game');
     const ctx = canvas.getContext('2d');
     const W = canvas.width, H = canvas.height;
@@ -44,7 +42,7 @@
       hosting: false
     };
 
-    let room = null, joined = false, hostTick = null;
+    let room = null, hostTick = null;
     const keys = {};
     window.addEventListener('keydown', e => keys[e.code] = true);
     window.addEventListener('keyup',   e => keys[e.code] = false);
@@ -68,7 +66,6 @@
     }
 
     function throttle(fn, ms) { let last = 0; return (...args) => { const now = Date.now(); if (now - last >= ms) { last = now; fn(...args); } }; }
-
     const publishMyPaddle = throttle(() => {
       if (!room) return;
       const me = myPlayer && myPlayer();
@@ -114,23 +111,13 @@
       if (me && typeof me.index === 'number') { state.slot = (me.index === 0) ? 'p1' : 'p2'; log('[SLOT] I am', state.slot, 'index', me.index); }
     }
 
-    async function join() {
-      if (joined) { diag('Already joined'); return; }
-      joined = true;
+    function loop() { applyLocalInput(); publishMyPaddle(); draw(); requestAnimationFrame(loop); }
+
+    // Auto-join lobby on page load
+    try {
       diag('Joining… (lobby should appear)');
-
-      try {
-        //room = await insertCoin({ gameId: 'pong-vanilla' });
-        room = await insertCoin({gameId: "QqPFMVJt8COoH5YxNOcC"});
-        //room = await insertCoin({ gameId: 'drawinggame' });
-      } catch (err) {
-        console.error('[JOIN] insertCoin error', err);
-        diag('Join failed — see console');
-        joined = false;
-        return;
-      }
-
-      if (!room) { diag('insertCoin returned null (no room).'); joined = false; return; }
+      room = await insertCoin({ gameId: "QqPFMVJt8COoH5YxNOcC" });
+      if (!room) { diag('insertCoin returned null (no room).'); return; }
 
       hookSubscriptions();
       assignSlotFromMe();
@@ -146,12 +133,11 @@
       });
 
       diag(`Joined — slot:${state.slot || 'unknown'} ${isHost && isHost() ? '(host)' : ''}`);
+      loop();
+    } catch (err) {
+      console.error('[JOIN] insertCoin error', err);
+      diag('Join failed — see console');
     }
-
-    function loop() { applyLocalInput(); publishMyPaddle(); draw(); requestAnimationFrame(loop); }
-    joinBtn.onclick = () => { log('[UI] Join clicked'); join(); };
-    diag('Ready — click "Create / Join game" to start');
-    loop();
   })();
   </script>
 </body>
