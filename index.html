@@ -2,19 +2,18 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Pong + Playroom Minimal — Fixed</title>
+  <title>Pong + Playroom Minimal — Local UMD + Deep Logs</title>
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <style>
     body { background:#111; color:#fff; text-align:center; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial; }
     canvas { display:block; margin:18px auto; background:#000; border:1px solid #333; }
     button { padding:8px 14px; font-size:15px; margin:8px; }
-    #diag { position:fixed; right:12px; top:12px; background:#222; color:#fff; padding:8px 10px; font-family:monospace; font-size:13px; z-index:9999; border-radius:6px; max-width:300px; }
+    #diag { position:fixed; right:12px; top:12px; background:#222; color:#fff; padding:8px 10px; font-family:monospace; font-size:13px; z-index:9999; border-radius:6px; max-width:360px; white-space:pre-wrap; }
   </style>
 </head>
 <body>
   <div>
     <button id="join">Join / Launch</button>
-    <button id="copyUrl" title="Copy current URL with room fragment">Copy room URL</button>
   </div>
   <canvas id="c" width="800" height="500"></canvas>
   <div id="diag">idle</div>
@@ -26,15 +25,29 @@
   <!-- PlayroomKit UMD (local copy hosted in your repo) -->
   <script src="./playroomkit.umd.js"></script>
 
+  <!-- Sanity check: confirm SDK is present -->
+  <script>
+    console.log('[BOOT] Playroom on window:', window.Playroom);
+    document.getElementById('diag').textContent =
+      'boot — Playroom ' + (window.Playroom ? 'OK' : 'MISSING');
+  </script>
+
   <script>
   (function () {
-    const diag = id => { const el = document.getElementById('diag'); el.textContent = id; };
+    const diagEl = document.getElementById('diag');
+    const log = (...a) => { console.log(...a); };
+    const diag = (msg) => { diagEl.textContent = msg; log('[DIAG]', msg); };
+
+    if (!window.Playroom) {
+      diag('Playroom missing — check that playroomkit.umd.js is served from your domain.');
+      return;
+    }
+
     const { insertCoin, onPlayerJoin, myPlayer, isHost } = window.Playroom;
 
     const canvas = document.getElementById('c');
     const ctx = canvas.getContext('2d');
     const joinBtn = document.getElementById('join');
-    const copyBtn = document.getElementById('copyUrl');
 
     const W = canvas.width, H = canvas.height;
     const PADDLE_H = 100, PADDLE_W = 12;
@@ -50,9 +63,10 @@
     let room = null;
     let joined = false;
     let hostTick = null;
+
     const keys = Object.create(null);
-    window.addEventListener('keydown', e => keys[e.code] = true);
-    window.addEventListener('keyup',   e => keys[e.code] = false);
+    window.addEventListener('keydown', e => { keys[e.code] = true; });
+    window.addEventListener('keyup',   e => { keys[e.code] = false; });
 
     function draw() {
       ctx.fillStyle = '#000';
@@ -93,17 +107,23 @@
 
     const publishMyPaddle = throttle(() => {
       if (!room) return;
-      const me = myPlayer();
+      const me = myPlayer && myPlayer();
       if (!me || typeof me.index !== 'number') return;
       const key = `paddle_${me.index}`;
       const y = (me.index === 0) ? state.paddles.p1.y : state.paddles.p2.y;
-      try { room.setState(key, { y }); } catch(e) { console.warn('setState failed', e); }
-    }, 50);
+      try {
+        room.setState(key, { y });
+        log('[NET] publish paddle', key, y);
+      } catch(e) {
+        console.warn('[WARN] setState failed', e);
+      }
+    }, 80);
 
     function startHost() {
       if (hostTick) return;
       state.hosting = true;
       diag('host: running');
+
       hostTick = setInterval(() => {
         const b = state.ball;
         b.x += b.vx; b.y += b.vy;
@@ -122,8 +142,12 @@
         }
 
         if (room) {
-          room.setState('ball', { x: b.x, y: b.y, vx: b.vx, vy: b.vy, ts: Date.now() });
-          room.setState('scores', state.scores);
+          try {
+            room.setState('ball', { x: b.x, y: b.y, vx: b.vx, vy: b.vy, ts: Date.now() });
+            room.setState('scores', state.scores);
+          } catch(e) {
+            console.warn('[WARN] host setState failed', e);
+          }
         }
       }, 1000 / 60);
     }
@@ -134,75 +158,113 @@
     }
 
     function hookPaddles() {
-      room.onStateChange('paddle_0', val => { if (val) state.paddles.p1 = { ...state.paddles.p1, ...val }; });
-      room.onStateChange('paddle_1', val => { if (val) state.paddles.p2 = { ...state.paddles.p2, ...val }; });
+      room.onStateChange('paddle_0', val => {
+        if (!val) return;
+        state.paddles.p1 = { ...state.paddles.p1, ...val };
+        log('[SUB] paddle_0', val);
+      });
+      room.onStateChange('paddle_1', val => {
+        if (!val) return;
+        state.paddles.p2 = { ...state.paddles.p2, ...val };
+        log('[SUB] paddle_1', val);
+      });
     }
 
     function hookBallAndScores() {
-      room.onStateChange('ball', val => { if (val && !state.hosting) state.ball = { ...state.ball, ...val }; });
-      room.onStateChange('scores', val => { if (val) state.scores = { ...val }; });
+      room.onStateChange('ball', val => {
+        if (!val) return;
+        if (!state.hosting) {
+          state.ball = { ...state.ball, ...val };
+          log('[SUB] ball', val);
+        } else {
+          log('[SUB] ball ignored (host)', val);
+        }
+      });
+      room.onStateChange('scores', val => {
+        if (val) {
+          state.scores = { ...val };
+          log('[SUB] scores', val);
+        }
+      });
     }
 
     async function join() {
-      if (joined) return;
+      if (joined) { diag('already joined'); return; }
       joined = true;
-      diag('joining...');
-      try {
-        room = await insertCoin();
-        if (!room) {
-          diag('No room object — ensure you clicked Launch (or try again)', 'orange');
-          console.error('insertCoin returned null. Ensure Launch completed or retry.');
-          joined = false;
-          return;
+      diag('joining… click overlay Launch if shown');
+
+      let attempt = 0;
+      let lastErr = null;
+      for (; attempt < 3; attempt++) {
+        try {
+          log('[JOIN] insertCoin attempt', attempt + 1);
+          room = await insertCoin();
+          if (room) break;
+        } catch (err) {
+          lastErr = err;
+          console.error('[JOIN] insertCoin error', err);
         }
-
-        hookBallAndScores();
-        hookPaddles();
-
-        const me = myPlayer();
-        if (me && typeof me.index === 'number') {
-          state.slot = (me.index === 0) ? 'p1' : 'p2';
-          console.info('assigned slot:', state.slot, 'index:', me.index);
-        }
-
-        if (isHost()) startHost(); else stopHost();
-
-        onPlayerJoin(player => {
-          const me2 = myPlayer();
-          if (me2 && player.id === me2.id && typeof player.index === 'number') {
-            state.slot = (player.index === 0) ? 'p1' : 'p2';
-            console.info('onPlayerJoin set slot:', state.slot);
-          }
-          if (isHost()) startHost(); else stopHost();
-        });
-
-                diag('joined — slot: ' + (state.slot || 'unknown') + (isHost() ? ' (host)' : ''));
-        console.log('Room URL:', location.href);
-      } catch (err) {
-        console.error('join failed:', err);
-        diag('join failed — see console');
-        joined = false;
+        diag('waiting for room… retrying');
+        await new Promise(r => setTimeout(r, 700));
       }
+
+      if (!room) {
+        diag('No room — ensure overlay completed, then click Join again');
+        console.error('[JOIN] room null after retries', lastErr);
+        joined = false;
+        return;
+      }
+
+      log('[JOIN] room acquired:', room);
+      diag('room acquired — hooking state');
+
+      hookBallAndScores();
+      hookPaddles();
+
+      const me = myPlayer && myPlayer();
+      log('[JOIN] myPlayer()', me);
+      if (me && typeof me.index === 'number') {
+        state.slot = (me.index === 0) ? 'p1' : 'p2';
+        log('[JOIN] assigned slot', state.slot, 'index', me.index);
+      } else {
+        log('[JOIN] myPlayer not ready yet — will wait for onPlayerJoin');
+      }
+
+      if (isHost && isHost()) { startHost(); } else { stopHost(); }
+      log('[JOIN] isHost?', isHost && isHost());
+
+      onPlayerJoin((player) => {
+        log('[EVENT] onPlayerJoin', player);
+        const me2 = myPlayer && myPlayer();
+        if (me2 && player.id === me2.id && typeof player.index === 'number') {
+          state.slot = (player.index === 0) ? 'p1' : 'p2';
+          log('[EVENT] slot updated via onPlayerJoin:', state.slot);
+        }
+        if (isHost && isHost()) startHost(); else stopHost();
+      });
+
+      diag('joined — slot: ' + (state.slot || 'unknown') + ((isHost && isHost()) ? ' (host)' : ''));
+      log('[JOIN] complete. URL:', location.href);
     }
 
-    // main loop
     function loop() {
       applyLocalInput();
-      publishMyPaddle();   // only publish your paddle
+      publishMyPaddle();
       draw();
       requestAnimationFrame(loop);
     }
 
-    joinBtn.onclick = join;
-    copyBtn.onclick = () => navigator.clipboard?.writeText(location.href).then(() => diag('URL copied'));
+    joinBtn.onclick = () => {
+      log('[UI] Join clicked');
+      join();
+    };
 
-    // start drawing loop
     loop();
 
-    // quick debug logs periodically
     setInterval(() => {
-      console.debug('slot', state.slot, 'hosting', state.hosting, 'room', !!room);
-    }, 4000);
+      log('[TICK]', { slot: state.slot, hosting: state.hosting, room: !!room });
+      diag('slot:' + (state.slot || '∅') + ' hosting:' + (state.hosting ? 'Y' : 'N') + ' room:' + (!!room));
+    }, 3000);
   })();
   </script>
 </body>
