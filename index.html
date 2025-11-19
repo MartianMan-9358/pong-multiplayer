@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Pong — Vanilla JS + PlayroomKit (2 players online)</title>
+  <title>Pong — PlayroomKit lobby test + basic game</title>
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <style>
     body { background:#111; color:#fff; text-align:center; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial; }
@@ -10,16 +10,12 @@
     button { padding:8px 14px; font-size:15px; margin:8px; }
     #diag { position:fixed; right:12px; top:12px; background:#222; color:#fff; padding:8px 10px;
             font-family:monospace; font-size:13px; z-index:9999; border-radius:6px; max-width:420px; white-space:pre-wrap; }
-    #code { margin-top:8px; font-family:monospace; }
   </style>
 </head>
 <body>
   <h1>Pong</h1>
   <p>Player 1: W/S — Player 2: ↑/↓</p>
-  <div>
-    <button id="join">Create / Join game</button>
-    <div id="code"></div>
-  </div>
+  <div><button id="join">Create / Join game (shows lobby)</button></div>
   <canvas id="game" width="800" height="500"></canvas>
   <div id="diag">booting…</div>
 
@@ -27,103 +23,72 @@
   <script src="https://unpkg.com/react/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom/umd/react-dom.production.min.js"></script>
 
-  <!-- Use your local copy if you have one; otherwise CDN or served file -->
-  <!-- Example: <script src="./playroomkit.umd.js"></script> -->
+  <!-- PlayroomKit UMD (served from your repo) -->
   <script src="./playroomkit.umd.js"></script>
 
   <script>
   (function () {
+    const diagEl = document.getElementById('diag');
+    const joinBtn = document.getElementById('join');
     const canvas = document.getElementById('game');
     const ctx = canvas.getContext('2d');
     const W = canvas.width, H = canvas.height;
     const PADDLE_H = 100, PADDLE_W = 12, BALL_R = 8;
 
-    const diagEl = document.getElementById('diag');
-    const codeEl = document.getElementById('code');
-    const joinBtn = document.getElementById('join');
     const log = (...a) => console.log(...a);
     const diag = msg => { diagEl.textContent = msg; log('[DIAG]', msg); };
 
-    // Ensure SDK
     if (!window.Playroom) { diag('PlayroomKit missing — ensure playroomkit.umd.js is loaded.'); return; }
     const { insertCoin, myPlayer, isHost, onPlayerJoin } = window.Playroom;
 
-    // Game state (local mirror of shared state)
     const state = {
       ball: { x: W/2, y: H/2, vx: 4, vy: 3 },
       paddles: { p1: { y: (H-PADDLE_H)/2 }, p2: { y: (H-PADDLE_H)/2 } },
       scores: { p1: 0, p2: 0 },
-      slot: null,         // 'p1' or 'p2' based on player.index
-      hosting: false      // true on the host tab
+      slot: null,
+      hosting: false
     };
 
     let room = null;
     let joined = false;
     let hostTick = null;
     const keys = {};
-    window.addEventListener('keydown', e => { keys[e.code] = true; });
-    window.addEventListener('keyup', e => { keys[e.code] = false; });
 
-    // Render
+    window.addEventListener('keydown', e => keys[e.code] = true);
+    window.addEventListener('keyup',   e => keys[e.code] = false);
+
     function draw() {
       ctx.fillStyle = '#000'; ctx.fillRect(0,0,W,H);
-
-      // Center line
-      ctx.strokeStyle = '#333'; ctx.setLineDash([8, 12]); ctx.beginPath();
-      ctx.moveTo(W/2, 0); ctx.lineTo(W/2, H); ctx.stroke(); ctx.setLineDash([]);
-
-      // Paddles
+      ctx.strokeStyle = '#333'; ctx.setLineDash([8,12]); ctx.beginPath(); ctx.moveTo(W/2,0); ctx.lineTo(W/2,H); ctx.stroke(); ctx.setLineDash([]);
       ctx.fillStyle = '#fff';
       ctx.fillRect(20, state.paddles.p1.y, PADDLE_W, PADDLE_H);
       ctx.fillRect(W - 20 - PADDLE_W, state.paddles.p2.y, PADDLE_W, PADDLE_H);
-
-      // Ball
-      ctx.beginPath();
-      ctx.arc(state.ball.x, state.ball.y, BALL_R, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Scores
+      ctx.beginPath(); ctx.arc(state.ball.x, state.ball.y, BALL_R, 0, Math.PI*2); ctx.fill();
       ctx.font = '20px monospace';
       ctx.fillText(state.scores.p1, W*0.25, 30);
       ctx.fillText(state.scores.p2, W*0.75, 30);
     }
 
-    // Input
     function applyLocalInput() {
       const clamp = y => Math.max(0, Math.min(H - PADDLE_H, y));
-
-      if (state.slot === 'p1') {
-        if (keys['KeyW']) state.paddles.p1.y -= 6;
-        if (keys['KeyS']) state.paddles.p1.y += 6;
-        state.paddles.p1.y = clamp(state.paddles.p1.y);
-      } else if (state.slot === 'p2') {
-        if (keys['ArrowUp']) state.paddles.p2.y -= 6;
-        if (keys['ArrowDown']) state.paddles.p2.y += 6;
-        state.paddles.p2.y = clamp(state.paddles.p2.y);
-      }
+      if (state.slot === 'p1') { if (keys['KeyW']) state.paddles.p1.y -= 6; if (keys['KeyS']) state.paddles.p1.y += 6; state.paddles.p1.y = clamp(state.paddles.p1.y); }
+      if (state.slot === 'p2') { if (keys['ArrowUp']) state.paddles.p2.y -= 6; if (keys['ArrowDown']) state.paddles.p2.y += 6; state.paddles.p2.y = clamp(state.paddles.p2.y); }
     }
 
-    // Throttle helper
     function throttle(fn, ms) {
       let last = 0;
-      return (...args) => {
-        const now = Date.now();
-        if (now - last >= ms) { last = now; fn(...args); }
-      };
+      return (...args) => { const now = Date.now(); if (now - last >= ms) { last = now; fn(...args); } };
     }
 
-    // Publish my paddle position (both players)
     const publishMyPaddle = throttle(() => {
       if (!room) return;
-      const me = myPlayer();
+      const me = myPlayer && myPlayer();
       if (!me || typeof me.index !== 'number') return;
       const key = `paddle_${me.index}`;
-      const y = me.index === 0 ? state.paddles.p1.y : state.paddles.p2.y;
-      try { room.setState(key, { y }); }
-      catch (e) { console.warn('[WARN] setState paddle failed', e); }
+      const y = (me.index === 0) ? state.paddles.p1.y : state.paddles.p2.y;
+      try { room.setState(key, { y }); } catch(e) { console.warn('[WARN] setState paddle failed', e); }
     }, 80);
 
-    // Host advances ball + scores and publishes
     function startHost() {
       if (hostTick) return;
       state.hosting = true;
@@ -131,33 +96,17 @@
       hostTick = setInterval(() => {
         const b = state.ball;
         b.x += b.vx; b.y += b.vy;
-
-        // Wall bounce
         if (b.y < BALL_R || b.y > H - BALL_R) b.vy *= -1;
-
-        // Paddle collisions
         const p1X = 20 + PADDLE_W, p2X = W - 20 - PADDLE_W;
         const hitP1 = (b.x - BALL_R < p1X && b.y > state.paddles.p1.y && b.y < state.paddles.p1.y + PADDLE_H);
         const hitP2 = (b.x + BALL_R > p2X && b.y > state.paddles.p2.y && b.y < state.paddles.p2.y + PADDLE_H);
         if (hitP1) b.vx = Math.abs(b.vx);
         if (hitP2) b.vx = -Math.abs(b.vx);
-
-        // Scoring
-        if (b.x < 0) {
-          state.scores.p2++;
-          Object.assign(b, { x: W/2, y: H/2, vx: 4, vy: 3 });
-        }
-        if (b.x > W) {
-          state.scores.p1++;
-          Object.assign(b, { x: W/2, y: H/2, vx: -4, vy: -3 });
-        }
-
-        // Publish authoritative ball + scores
+        if (b.x < 0) { state.scores.p2++; Object.assign(b, { x: W/2, y: H/2, vx: 4, vy: 3 }); }
+        if (b.x > W) { state.scores.p1++; Object.assign(b, { x: W/2, y: H/2, vx: -4, vy: -3 }); }
         if (room) {
-          try {
-            room.setState('ball', { x: b.x, y: b.y, vx: b.vx, vy: b.vy, ts: Date.now() });
-            room.setState('scores', state.scores);
-          } catch (e) { console.warn('[WARN] host setState failed', e); }
+          try { room.setState('ball', { x: b.x, y: b.y, vx: b.vx, vy: b.vy, ts: Date.now() }); room.setState('scores', state.scores); }
+          catch(e) { console.warn('[WARN] host setState failed', e); }
         }
       }, 1000 / 60);
     }
@@ -167,56 +116,28 @@
       if (hostTick) { clearInterval(hostTick); hostTick = null; diag('Host stopped'); }
     }
 
-    // Subscribe to shared state
     function hookSubscriptions() {
       room.onStateChange('paddle_0', val => { if (val) state.paddles.p1 = { ...state.paddles.p1, ...val }; });
       room.onStateChange('paddle_1', val => { if (val) state.paddles.p2 = { ...state.paddles.p2, ...val }; });
-
-      room.onStateChange('ball', val => {
-        if (!val) return;
-        // Only non-host mirrors the ball; host is authoritative
-        if (!state.hosting) state.ball = { ...state.ball, ...val };
-      });
-
+      room.onStateChange('ball', val => { if (val && !state.hosting) state.ball = { ...state.ball, ...val }; });
       room.onStateChange('scores', val => { if (val) state.scores = { ...val }; });
     }
 
-    // Slot assignment and host switching
     function assignSlotFromMe() {
-      const me = myPlayer();
-      if (me && typeof me.index === 'number') {
-        state.slot = (me.index === 0) ? 'p1' : 'p2';
-        log('[SLOT] I am', state.slot, 'index', me.index);
-      }
+      const me = myPlayer && myPlayer();
+      if (me && typeof me.index === 'number') { state.slot = (me.index === 0) ? 'p1' : 'p2'; log('[SLOT] I am', state.slot, 'index', me.index); }
     }
 
-    // Join flow: host or guest depending on URL hash
     async function join() {
       if (joined) { diag('Already joined'); return; }
       joined = true;
-      diag('Joining…');
-
-      // If URL contains #r=CODE, join that room; otherwise create one.
-      const hash = (location.hash || '').replace(/^#/, '');
-      const params = new URLSearchParams(hash);
-      const codeInUrl = params.get('r');
+      diag('Joining… (lobby should appear)');
 
       try {
-        if (codeInUrl) {
-          room = await insertCoin({ roomCode: codeInUrl },
-            () => log('[JOIN] Launch (guest)'),
-            () => log('[JOIN] Disconnected'));
-        } else {
-          room = await insertCoin({ gameId: 'pong-vanilla', skipLobby: true },
-            () => log('[JOIN] Launch (host)'),
-            () => log('[JOIN] Disconnected'));
-          // Show and embed the room code in the URL for easy sharing
-          const code = (room.getRoomCode && room.getRoomCode()) || '';
-          if (code) {
-            codeEl.textContent = `Room code: ${code} — Share this URL: ${location.origin}${location.pathname}#r=${code}`;
-            try { history.replaceState(null, '', `#r=${code}`); } catch(_) {}
-          }
-        }
+        // IMPORTANT: enable lobby by omitting skipLobby
+        room = await insertCoin({ gameId: 'pong-vanilla' },
+          () => log('[JOIN] Launch callback'),
+          () => log('[JOIN] Disconnected'));
       } catch (err) {
         console.error('[JOIN] insertCoin error', err);
         diag('Join failed — see console');
@@ -224,34 +145,25 @@
         return;
       }
 
-      if (!room) { diag('insertCoin returned null'); joined = false; return; }
+      if (!room) { diag('insertCoin returned null (no room).'); joined = false; return; }
 
-      // Subscriptions + slot + host
       hookSubscriptions();
       assignSlotFromMe();
-      if (isHost()) startHost(); else stopHost();
+      if (isHost && isHost()) startHost(); else stopHost();
 
-      // If Playroom reassigns indices later, keep slot/host in sync
       onPlayerJoin(player => {
-        const me = myPlayer();
+        const me = myPlayer && myPlayer();
         if (me && player.id === me.id && typeof player.index === 'number') {
           state.slot = (player.index === 0) ? 'p1' : 'p2';
           log('[EVENT] My slot updated:', state.slot);
         }
-        if (isHost()) startHost(); else stopHost();
+        if (isHost && isHost()) startHost(); else stopHost();
       });
 
-      diag(`Joined — slot:${state.slot || 'unknown'} ${isHost() ? '(host)' : ''}`);
+      diag(`Joined — slot:${state.slot || 'unknown'} ${isHost && isHost() ? '(host)' : ''}`);
     }
 
-    // Main loop
-    function loop() {
-      applyLocalInput();
-      publishMyPaddle();
-      draw();
-      requestAnimationFrame(loop);
-    }
-
+    function loop() { applyLocalInput(); publishMyPaddle(); draw(); requestAnimationFrame(loop); }
     joinBtn.onclick = () => { log('[UI] Join clicked'); join(); };
     diag('Ready — click "Create / Join game" to start');
     loop();
