@@ -1,0 +1,136 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Pong + Playroom Minimal</title>
+  <style>
+    body { background:#111; color:#fff; text-align:center; }
+    canvas { display:block; margin:20px auto; background:#000; }
+  </style>
+</head>
+<body>
+  <button id="join">Join</button>
+  <canvas id="c"></canvas>
+
+  <!-- Playroom UMD (CDN) -->
+  <script src="https://unpkg.com/playroomkit/multiplayer.full.umd.js"></script>
+
+  <script>
+  (async () => {
+    const PR = window.Playroom;   // CDN build exposes Playroom
+    const joinBtn = document.getElementById('join');
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d');
+    canvas.width = 800; canvas.height = 500;
+
+    // Local state
+    const state = {
+      ball: { x: canvas.width/2, y: canvas.height/2, vx: 4, vy: 3 },
+      paddles: { p1: { y: (canvas.height-100)/2 }, p2: { y: (canvas.height-100)/2 } },
+      scores: { p1:0, p2:0 },
+      meta: { hostId: null }
+    };
+
+    let room = null, localId = null, slot = 'p1', isHost = false;
+    const keys = {};
+    window.addEventListener('keydown', e => keys[e.code]=true);
+    window.addEventListener('keyup', e => keys[e.code]=false);
+
+    function draw() {
+      ctx.fillStyle='#000'; ctx.fillRect(0,0,canvas.width,canvas.height);
+      ctx.fillStyle='#fff';
+      ctx.fillRect(20, state.paddles.p1.y, 12, 100);
+      ctx.fillRect(canvas.width-32, state.paddles.p2.y, 12, 100);
+      ctx.beginPath(); ctx.arc(state.ball.x, state.ball.y, 8,0,Math.PI*2); ctx.fill();
+      ctx.fillText(state.scores.p1, canvas.width*0.25, 30);
+      ctx.fillText(state.scores.p2, canvas.width*0.75, 30);
+    }
+
+    function applyLocalInput() {
+      if (slot==='p1') {
+        if (keys['KeyW']) state.paddles.p1.y -= 6;
+        if (keys['KeyS']) state.paddles.p1.y += 6;
+        state.paddles.p1.y = Math.max(0, Math.min(canvas.height-100, state.paddles.p1.y));
+      } else {
+        if (keys['ArrowUp']) state.paddles.p2.y -= 6;
+        if (keys['ArrowDown']) state.paddles.p2.y += 6;
+        state.paddles.p2.y = Math.max(0, Math.min(canvas.height-100, state.paddles.p2.y));
+      }
+    }
+
+    // Throttle helper
+    function throttle(fn, ms){ let last=0; return (...a)=>{ const now=Date.now(); if(now-last>=ms){ last=now; fn(...a); } }; }
+    const publishPaddles = throttle(()=> { if (room) PR.setState('paddles', state.paddles); }, 50);
+
+    // Host loop
+    let hostTick = null;
+    function startHost() {
+      if (hostTick) return;
+      hostTick = setInterval(()=>{
+        const b = state.ball;
+        b.x += b.vx; b.y += b.vy;
+        if (b.y < 8 || b.y > canvas.height-8) b.vy *= -1;
+        if (b.x - 8 < 32 && b.y > state.paddles.p1.y && b.y < state.paddles.p1.y+100) b.vx = -b.vx;
+        if (b.x + 8 > canvas.width-32 && b.y > state.paddles.p2.y && b.y < state.paddles.p2.y+100) b.vx = -b.vx;
+        if (b.x < 0) { state.scores.p2++; b.x=canvas.width/2; b.vx=4; }
+        if (b.x > canvas.width) { state.scores.p1++; b.x=canvas.width/2; b.vx=-4; }
+        PR.setState('ball', { ...b, ts: Date.now() });
+        PR.setState('scores', state.scores);
+        PR.setState('paddles', state.paddles);
+      }, 1000/60);
+    }
+    function stopHost(){ clearInterval(hostTick); hostTick=null; }
+
+    // Hook SDK state updates
+    function hookState() {
+      PR.onStateChange('ball', val => { if (!isHost && val) state.ball = { ...state.ball, ...val }; });
+      PR.onStateChange('paddles', val => { if (val) state.paddles = { ...state.paddles, ...val }; });
+      PR.onStateChange('scores', val => { if (val) state.scores = val; });
+      PR.onStateChange('meta', val => {
+        if (val && val.hostId) {
+          state.meta.hostId = val.hostId;
+          isHost = (localId === val.hostId);
+          if (isHost) startHost(); else stopHost();
+        }
+      });
+    }
+
+    // Join flow
+    async function join() {
+      room = await PR.insertCoin();
+      if (!room) {
+        console.error("Room not returned. Did you allow the popup and click Launch?");
+        return;
+      }
+      const players = room.players || [];
+      if (!players.length) {
+        console.error("No players yet — did you click Launch?");
+        return;
+      }
+      const me = players.find(p => p.isLocal);
+      if (!me) {
+        console.error("Couldn't find local player in players array:", players);
+        return;
+      }
+      localId = me.id;
+      const myIndex = players.findIndex(p => p.id === localId);
+      slot = (myIndex === 0) ? 'p1' : 'p2';
+      const hostId = players[0]?.id || localId;
+      if (localId === hostId) {
+        isHost = true;
+        PR.setState('meta', { hostId });
+        startHost();
+      }
+      hookState();
+      setInterval(()=>PR.setState('paddles', state.paddles), 200);
+    }
+
+    joinBtn.onclick = join;
+
+    // Main loop
+    function loop(){ applyLocalInput(); publishPaddles(); draw(); requestAnimationFrame(loop); }
+    loop();
+  })();
+  </script>
+</body>
+</html>
