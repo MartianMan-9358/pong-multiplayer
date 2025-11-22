@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Pong — PlayroomKit lobby test + basic game</title>
+  <title>Pong — Firebase Multiplayer</title>
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <style>
     body { background:#111; color:#fff; text-align:center; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial; }
@@ -17,22 +17,29 @@
   <canvas id="game" width="800" height="500"></canvas>
   <div id="diag">booting…</div>
 
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://unpkg.com/playroomkit/multiplayer.full.umd.js"></script>
-  <script>
-  (async function () {
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js";
+    import { getDatabase, ref, set, onValue } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-database.js";
+
+    // 🔑 Your Firebase config (replace with your actual values)
+    const firebaseConfig = {
+      apiKey: "YOUR_API_KEY",
+      authDomain: "pongvanilla.firebaseapp.com",
+      databaseURL: "https://pongvanilla.firebaseio.com",
+      projectId: "pongvanilla",
+      storageBucket: "pongvanilla.appspot.com",
+      messagingSenderId: "146180407280",
+      appId: "1:146180407280:web:e9791c16f3914adcb0e735"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
+
     const diagEl = document.getElementById('diag');
     const canvas = document.getElementById('game');
     const ctx = canvas.getContext('2d');
     const W = canvas.width, H = canvas.height;
     const PADDLE_H = 100, PADDLE_W = 12, BALL_R = 8;
-
-    const log = (...a) => console.log(...a);
-    const diag = msg => { diagEl.textContent = msg; log('[DIAG]', msg); };
-
-    if (!window.Playroom) { diag('PlayroomKit missing — check CDN URL and hard-reload.'); return; }
-    const { insertCoin, myPlayer, isHost, onPlayerJoin } = window.Playroom;
 
     const state = {
       ball: { x: W/2, y: H/2, vx: 4, vy: 3 },
@@ -42,7 +49,6 @@
       hosting: false
     };
 
-    let room = null, hostTick = null;
     const keys = {};
     window.addEventListener('keydown', e => keys[e.code] = true);
     window.addEventListener('keyup',   e => keys[e.code] = false);
@@ -61,25 +67,23 @@
 
     function applyLocalInput() {
       const clamp = y => Math.max(0, Math.min(H - PADDLE_H, y));
-      if (state.slot === 'p1') { if (keys['KeyW']) state.paddles.p1.y -= 6; if (keys['KeyS']) state.paddles.p1.y += 6; state.paddles.p1.y = clamp(state.paddles.p1.y); }
-      if (state.slot === 'p2') { if (keys['ArrowUp']) state.paddles.p2.y -= 6; if (keys['ArrowDown']) state.paddles.p2.y += 6; state.paddles.p2.y = clamp(state.paddles.p2.y); }
+      if (state.slot === 'p1') {
+        if (keys['KeyW']) state.paddles.p1.y -= 6;
+        if (keys['KeyS']) state.paddles.p1.y += 6;
+        state.paddles.p1.y = clamp(state.paddles.p1.y);
+        set(ref(db, "paddles/p1"), { y: state.paddles.p1.y });
+      }
+      if (state.slot === 'p2') {
+        if (keys['ArrowUp']) state.paddles.p2.y -= 6;
+        if (keys['ArrowDown']) state.paddles.p2.y += 6;
+        state.paddles.p2.y = clamp(state.paddles.p2.y);
+        set(ref(db, "paddles/p2"), { y: state.paddles.p2.y });
+      }
     }
 
-    function throttle(fn, ms) { let last = 0; return (...args) => { const now = Date.now(); if (now - last >= ms) { last = now; fn(...args); } }; }
-    const publishMyPaddle = throttle(() => {
-      if (!room) return;
-      const me = myPlayer && myPlayer();
-      if (!me || typeof me.index !== 'number') return;
-      const key = `paddle_${me.index}`;
-      const y = (me.index === 0) ? state.paddles.p1.y : state.paddles.p2.y;
-      try { room.setState(key, { y }); } catch(e) { console.warn('[WARN] setState paddle failed', e); }
-    }, 80);
-
+    // Host updates ball + scores
     function startHost() {
-      if (hostTick) return;
-      state.hosting = true;
-      diag('Host running');
-      hostTick = setInterval(() => {
+      setInterval(() => {
         const b = state.ball;
         b.x += b.vx; b.y += b.vy;
         if (b.y < BALL_R || b.y > H - BALL_R) b.vy *= -1;
@@ -90,55 +94,30 @@
         if (hitP2) b.vx = -Math.abs(b.vx);
         if (b.x < 0) { state.scores.p2++; Object.assign(b, { x: W/2, y: H/2, vx: 4, vy: 3 }); }
         if (b.x > W) { state.scores.p1++; Object.assign(b, { x: W/2, y: H/2, vx: -4, vy: -3 }); }
-        if (room) {
-          try { room.setState('ball', { x: b.x, y: b.y, vx: b.vx, vy: b.vy, ts: Date.now() }); room.setState('scores', state.scores); }
-          catch(e) { console.warn('[WARN] host setState failed', e); }
-        }
-      }, 1000 / 60);
+
+        set(ref(db, "ball"), b);
+        set(ref(db, "scores"), state.scores);
+      }, 1000/60);
     }
 
-    function stopHost() { state.hosting = false; if (hostTick) { clearInterval(hostTick); hostTick = null; diag('Host stopped'); } }
+    // Firebase listeners
+    onValue(ref(db, "paddles/p1"), snap => { const val = snap.val(); if (val) state.paddles.p1.y = val.y; });
+    onValue(ref(db, "paddles/p2"), snap => { const val = snap.val(); if (val) state.paddles.p2.y = val.y; });
+    onValue(ref(db, "ball"), snap => { const val = snap.val(); if (val) state.ball = val; });
+    onValue(ref(db, "scores"), snap => { const val = snap.val(); if (val) state.scores = val; });
 
-    function hookSubscriptions() {
-      room.onStateChange('paddle_0', val => { if (val) state.paddles.p1 = { ...state.paddles.p1, ...val }; });
-      room.onStateChange('paddle_1', val => { if (val) state.paddles.p2 = { ...state.paddles.p2, ...val }; });
-      room.onStateChange('ball', val => { if (val && !state.hosting) state.ball = { ...state.ball, ...val }; });
-      room.onStateChange('scores', val => { if (val) state.scores = { ...val }; });
+    // Assign slot manually (for demo: first browser = p1, second = p2)
+    state.slot = prompt("Enter slot: p1 or p2");
+
+    // Decide host manually (for demo: first browser acts as host)
+    if (state.slot === 'p1') startHost();
+
+    function loop() {
+      applyLocalInput();
+      draw();
+      requestAnimationFrame(loop);
     }
-
-    function assignSlotFromMe() {
-      const me = myPlayer && myPlayer();
-      if (me && typeof me.index === 'number') { state.slot = (me.index === 0) ? 'p1' : 'p2'; log('[SLOT] I am', state.slot, 'index', me.index); }
-    }
-
-    function loop() { applyLocalInput(); publishMyPaddle(); draw(); requestAnimationFrame(loop); }
-
-    // Auto-join lobby on page load
-    try {
-      diag('Joining… (lobby should appear)');
-      room = await insertCoin({ gameId: "QqPFMVJt8COoH5YxNOcC" });
-      if (!room) { diag('insertCoin returned null (no room).'); return; }
-
-      hookSubscriptions();
-      assignSlotFromMe();
-      if (isHost && isHost()) startHost(); else stopHost();
-
-      onPlayerJoin(player => {
-        const me = myPlayer && myPlayer();
-        if (me && player.id === me.id && typeof player.index === 'number') {
-          state.slot = (player.index === 0) ? 'p1' : 'p2';
-          log('[EVENT] My slot updated:', state.slot);
-        }
-        if (isHost && isHost()) startHost(); else stopHost();
-      });
-
-      diag(`Joined — slot:${state.slot || 'unknown'} ${isHost && isHost() ? '(host)' : ''}`);
-      loop();
-    } catch (err) {
-      console.error('[JOIN] insertCoin error', err);
-      diag('Join failed — see console');
-    }
-  })();
+    loop();
   </script>
 </body>
 </html>
